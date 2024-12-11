@@ -1,0 +1,198 @@
+# This is a basic workflow to help you get started with Actions
+name: EXAMPLE-BE
+
+# Controls when the workflow will run
+on:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      VersionType:
+        type: choice
+        description: 'Which type of versioning do you want ?'
+        options:
+        - no change
+        - patch
+        - minor
+        - major
+
+env :
+  API_URL: https://example.com/api/
+  BUILD_TYPE: client
+  TAG_PREFIX: release/production_v
+  NOW: "$(date +'%d%m%y%H%M')"
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GITHUB_USER: $GITHUB_ACTOR
+  GITHUB_EMAIL: $GITHUB_ACTOR@users.noreply.github.com
+  APP_NAME: example-backend
+  ENV_NAME: example-production
+  CRON_ENV_NAME: example-production-cron
+  AWS_REGION: eu-central-1
+  PACKAGE: deploy.zip
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This is a workflow job called "Test"
+  Test:
+    name: Test
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: 'Checkout source code'
+        uses: 'actions/checkout@v2'
+        with:
+          ref: ${{ github.ref }}
+      # Setup node js environment
+      - name: Set up Node.js version
+        uses: actions/setup-node@v1
+        with:
+          node-version: '14.17.6'
+      # Install code dependencies and build code
+      - name: Install dependencies and build the code for ${{ env.BUILD_TYPE }}
+        run: |
+          yarn install
+          yarn build
+
+  # This is a workflow job called "Set_Release"
+  Set_Release:
+  # This is a previous job which is required to be completed successfully for running this job. 
+    needs: [Test]
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: 'Checkout source code'
+        uses: 'actions/checkout@v2'
+        with:
+          ref: ${{ github.ref }}
+      # Setup node js environment
+      - name: Set up Node.js version
+        uses: actions/setup-node@v1
+        with:
+          node-version: '14.17.6'
+      - if: "!contains(inputs.VersionType, 'no change')"
+        name: 'Release Version Update'
+        run: |
+          git config --global user.name "${{ env.GITHUB_USER }}"
+          git config --global user.email "${{ env.GITHUB_EMAIL }}"
+          npm install -g conventional-changelog-cli
+          npm version ${{ inputs.VersionType }} --tag-version-prefix=${{ env.TAG_PREFIX }}-${{ steps.extract_version.outputs.version }}
+          git push origin --tags
+          git push origin
+          echo "Version updated"
+      - name: Extract version
+        id: extract_version
+        uses: Saionaro/extract-package-version@v1.0.6
+      - name: Print version
+        run: echo ${{ steps.extract_version.outputs.version }} 
+      - if: "contains(inputs.VersionType, 'no change')"
+        name: 'No Change' 
+        run: |
+          git config --global user.name "${{ env.GITHUB_USER }}"
+          git config --global user.email "${{ env.GITHUB_EMAIL }}"
+          npm install -g conventional-changelog-cli
+          echo "${{ env.NOW }}"
+          git tag ${{ env.TAG_PREFIX }}${{ steps.extract_version.outputs.version }}_${{ env.NOW }}
+          git push origin --tags
+          git push origin
+          echo "Version Reset Completed Successfully"
+
+  # This is a workflow job called "Build"
+  Build:
+    name: Build
+    # This is a previous job which is required to be completed successfully for running this job. 
+    needs: [Set_Release]
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: 'Checkout source code'
+        uses: 'actions/checkout@v2'
+        with:
+          ref: ${{ github.ref }}
+      - name: Extract version
+        id: extract_version
+        uses: Saionaro/extract-package-version@v1.0.6
+      # From now you can access the version
+      - name: Print version
+        run: echo ${{ steps.extract_version.outputs.version }}
+      - name: Set up Node.js version
+        uses: actions/setup-node@v1
+        with:
+          node-version: '14.17.6'
+      - name: Install dependencies
+        run: yarn install # will run `yarn install` command
+      - name: Prepare ${{ env.BUILD_TYPE }} build
+        run: yarn build # will run `yarn build` command
+
+  # This is a workflow job called "Deploy"
+  deploy:
+    # This is a previous job which is required to be completed successfully for running this job. 
+    needs: [Build]
+    name: Deploy
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: 'Checkout source code'
+        uses: 'actions/checkout@v2'
+        with:
+          ref: ${{ github.ref }}
+      - name: Make ZIP EB
+        run: zip -r deploy.zip . -x '*.git*' -x 'node_modules'
+      - name: Get timestamp
+        uses: gerred/actions/current-time@master
+        id: current-time
+      - name: Run string replace
+        uses: frabert/replace-string-action@master
+        id: format-time
+        with:
+          pattern: '[:\.]+'
+          string: "${{ steps.current-time.outputs.time }}"
+          replace-with: '-'
+          flags: 'g'
+      - name: Deploy to EB ${{ env.ENV_NAME }}
+        uses: einaregilsson/beanstalk-deploy@v20
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: ${{ env.APP_NAME }}
+          environment_name: ${{ env.ENV_NAME }}
+          version_label: "${{ env.ENV_NAME }}-${{ steps.format-time.outputs.replaced }}"
+          region: ${{ env.AWS_REGION }}
+          deployment_package: ${{ env.PACKAGE }}
+      - name: Deploy to CronServer
+        uses: einaregilsson/beanstalk-deploy@v20
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: ${{ env.APP_NAME }}
+          environment_name: ${{ env.CRON_ENV_NAME }}
+          version_label: "${{ env.CRON_ENV_NAME }}-${{ steps.format-time.outputs.replaced }}"
+          region: ${{ env.AWS_REGION }}
+          deployment_package: ${{ env.PACKAGE }}
+
+  # This is a workflow job called "Health_Check"
+  Health_Check:
+    name: Deployment Health Check
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # This is a previous job which is required to be completed successfully for running this job. 
+    needs: [Deploy]
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+    - name: Check the deployed service URL
+      uses: jtalk/url-health-check-action@v2
+      with:
+        url: ${{ env.API_URL }}
+        follow-redirect: false # Optional, defaults to "false"
+        max-attempts: 3 # Optional, defaults to 1
+        retry-delay: 5s # Optional, only applicable to max-attempts > 1
+        retry-all: false # Optional, defaults to "false"
+
+

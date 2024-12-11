@@ -1,0 +1,32 @@
+stages:
+  - build
+  - push
+  - deploy
+
+# Build Docker image
+build:
+  stage: build
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_NAME .
+  tags:
+    - docker
+
+# Push Docker image to GitLab container registry
+push:
+  stage: push
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_NAME
+  tags:
+    - docker
+
+# Deploy to Kubernetes using kubectl
+deploy:
+  stage: deploy
+  script:
+    - kubectl apply -f k8s-deployment.yaml  # Ensure kubectl is configured
+  only:
+    - main  # Deploy only from the main branch
+  environment:
+    name: production
+    url: https://your-app.example.com

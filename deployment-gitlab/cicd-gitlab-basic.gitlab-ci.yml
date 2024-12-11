@@ -1,0 +1,27 @@
+stages:
+  - build
+  - test
+  - deploy
+
+# Build stage: Install dependencies and compile the code
+build:
+  stage: build
+  script:
+    - echo "Building the project..."
+    - npm install  # or your relevant build command
+
+# Test stage: Run unit tests
+test:
+  stage: test
+  script:
+    - echo "Running tests..."
+    - npm test  # or your relevant test command
+
+# Deploy stage: Deploy the application
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying the application..."
+    - ./deploy.sh  # Replace with your deployment script
+  only:
+    - main  # Only deploy from the main branch

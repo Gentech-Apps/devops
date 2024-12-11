@@ -1,0 +1,21 @@
+stages:
+  - build
+  - deploy
+
+# Create deployable artifact
+build:
+  stage: build
+  script:
+    - zip -r app.zip .  # Replace with the relevant build artifact creation
+
+# Deploy to AWS Elastic Beanstalk
+deploy:
+  stage: deploy
+  script:
+    - aws elasticbeanstalk create-application-version --application-name $EB_APPLICATION_NAME --version-label $CI_COMMIT_REF_NAME --source-bundle S3Bucket=$AWS_S3_BUCKET_NAME,S3Key=app.zip
+    - aws elasticbeanstalk update-environment --environment-name $EB_ENVIRONMENT_NAME --version-label $CI_COMMIT_REF_NAME
+  only:
+    - main
+  environment:
+    name: production
+    url: https://$EB_ENVIRONMENT_NAME.elasticbeanstalk.com

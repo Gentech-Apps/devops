@@ -1,0 +1,18 @@
+stages:
+  - build
+  - deploy
+
+# Install dependencies
+build:
+  stage: build
+  script:
+    - npm install  # or the equivalent command for your Lambda project
+
+# Deploy Lambda function
+deploy:
+  stage: deploy
+  script:
+    - zip -r lambda.zip .
+    - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://lambda.zip
+  only:
+    - main  # Trigger deployment from the main branch

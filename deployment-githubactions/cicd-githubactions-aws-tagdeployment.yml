@@ -1,0 +1,181 @@
+# This is a basic workflow to help you get started with Actions
+name: nodejs-deployment
+
+# Controls when the workflow will run
+on:
+  
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      VersionType:
+        type: choice
+        description: 'Which type of versioning do you want ?'
+        options:
+        - no change
+        - patch
+        - minor
+        - major
+
+env :
+  BASE_URL: https://example.com/
+  API_URL: https://example.com/api/
+  ECOMMERCE_API_URL: https://example.com/ecommerce-api/
+  CONFIG_FILE: src/environments/environment.client.ts
+  BUILD_TYPE: client
+  TAG_PREFIX: release/production_v
+  NOW: "$(date +'%d%m%y%H%M')"
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GITHUB_USER: $GITHUB_ACTOR
+  GITHUB_EMAIL: $GITHUB_ACTOR@users.noreply.github.com
+  AWS_S3_BUCKET: example.com
+  SOURCE_DIR: dist/
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This is a workflow job called "Test"
+  Test:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: 'Checkout source code'
+        uses: 'actions/checkout@v2'
+        with:
+          ref: ${{ github.ref }}
+      # Setup node js environment
+      - name: Set up Node.js version
+        uses: actions/setup-node@v1
+        with:
+          node-version: '14.x'
+      # Install code dependencies and build code
+      - name: Install dependencies and build the code for ${{ env.BUILD_TYPE }}
+        run: |
+          yarn install
+          node --max_old_space_size=8092 node_modules/@angular/cli/bin/ng build --outputHashing=all --configuration=${{ env.BUILD_TYPE }}
+
+  # This is a workflow job called "Set_Release"
+  Set_Release:
+    # This is a previous job which is required to be completed successfully for running this job. 
+    needs: [Test]
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: 'Checkout source code'
+        uses: 'actions/checkout@v2'
+        with:
+          ref: ${{ github.ref }}
+      # Setup node js environment
+      - name: Set up Node.js version
+        uses: actions/setup-node@v1
+        with:
+          node-version: '14.x'
+      - if: "!contains(inputs.VersionType, 'no change')"
+        name: 'Release Version Update'
+        run: |
+          git config --global user.name "${{ env.GITHUB_USER }}"
+          git config --global user.email "${{ env.GITHUB_EMAIL }}"
+          npm install -g conventional-changelog-cli
+          npm version ${{ inputs.VersionType }} --tag-version-prefix=${{ env.TAG_PREFIX }}-${{ steps.extract_version.outputs.version }}
+          git push origin --tags
+          git push origin
+          echo "Version updated"
+      - name: Extract version
+        id: extract_version
+        uses: Saionaro/extract-package-version@v1.0.6
+      - name: Print version
+        run: echo ${{ steps.extract_version.outputs.version }}
+      - if: "contains(inputs.VersionType, 'no change')"
+        name: 'No Change'
+        run: |
+          git config --global user.name "${{ env.GITHUB_USER }}"
+          git config --global user.email "${{ env.GITHUB_EMAIL }}"
+          npm install -g conventional-changelog-cli
+          echo "${{ env.NOW }}"
+          git tag ${{ env.TAG_PREFIX }}${{ steps.extract_version.outputs.version }}_${{ env.NOW }}
+          git push origin --tags
+          git push origin
+          echo "Version Reset Completed Successfully"
+
+  # This is a workflow job called "Build_And_Deploy"
+  Build_And_Deploy:
+    # This is a previous job which is required to be completed successfully for running this job. 
+    needs: [Set_Release]
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: 'Checkout source code'
+        uses: 'actions/checkout@v2'
+        with:
+          ref: ${{ github.ref }}
+      - name: Extract version
+        id: extract_version
+        uses: Saionaro/extract-package-version@v1.0.6
+      # From now you can access the version
+      - name: Print version
+        run: echo ${{ steps.extract_version.outputs.version }}
+      - name: Update Application Version
+        uses: jacobtomlinson/gha-find-replace@v2
+        with:
+          find: "appVersion: (.*),"
+          replace: "appVersion: '${{ steps.extract_version.outputs.version }}',"
+          include: "${{ env.CONFIG_FILE }}"
+          regex: true
+      - name: Update API Url to ${{ env.API_URL }}
+        uses: jacobtomlinson/gha-find-replace@v2
+        with:
+          find: "api_url: '(.*)',"
+          replace: "api_url: '${{ env.API_URL }}',"
+          include: "${{ env.CONFIG_FILE }}"
+          regex: true
+      - name: Update Ecommerce API Url to ${{ env.ECOMMERCE_API_URL }}
+        uses: jacobtomlinson/gha-find-replace@v2
+        with:
+          find: "api_ecommerce_url: '(.*)',"
+          replace: "api_ecommerce_url: '${{ env.ECOMMERCE_API_URL }}',"
+          include: "${{ env.CONFIG_FILE }}"
+          regex: true
+      # - name: Open config file
+      #   run: cat ${{ env.CONFIG_FILE }}
+      - name: Set up Node.js version
+        uses: actions/setup-node@v1
+        with:
+          node-version: '14.x'
+      - name: Install dependencies
+        run: yarn install
+      - name: Prepare ${{ env.BUILD_TYPE }} build
+        run: node --max_old_space_size=8092 node_modules/@angular/cli/bin/ng build --outputHashing=all --configuration=${{ env.BUILD_TYPE }}
+      # Deploy to S3
+      # This is a third party action used to sync our production build app with the AWS S3 bucket
+      # For security purpose I am using secrets configured in project repo setting.
+      - name: Deploy to S3
+        uses: jakejarvis/s3-sync-action@v0.5.1
+        with:
+          # --acl public read => makes files publicly readable(i.e. makes sure that your bucket settings are also set to public)
+          # --delete => permanently deletes files in S3 bucket that are not present in latest build
+          args: --acl public-read --delete
+        env:
+          # note: use IAM role with limited role for below access-key-id and secret-access-key
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }} # Access Key ID
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }} # Access Secret Key
+
+  # This is a workflow job called "Health_Check"
+  Health_Check:
+    name: Deployment Health Check
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    needs: [Build_And_Deploy]
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+    - name: Check the deployed service URL
+      uses: jtalk/url-health-check-action@v2
+      with:
+        url: ${{ env.BASE_URL }}
+        follow-redirect: false # Optional, defaults to "false"
+        max-attempts: 3 # Optional, defaults to 1
+        retry-delay: 5s # Optional, only applicable to max-attempts > 1
+        retry-all: false # Optional, defaults to "false"

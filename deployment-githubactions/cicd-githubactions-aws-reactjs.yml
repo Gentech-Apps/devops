@@ -1,0 +1,67 @@
+# This is a basic workflow to help you get started with Actions
+name: Production Deployment
+
+# Controls when the workflow will run
+on:
+
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    tags:
+      - 'production/*'
+
+env:
+  CI: false
+  BROWSER: none
+  EXTEND_ESLINT: true
+  DOMAIN: https://example.com/
+  REACT_APP_API_URL: https://example.com/api/
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build_and_deploy"
+  build_and_deploy:
+    environment:
+      name: production-url
+      url: https://example.com/
+    name: Build and Deploy to Production
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+      # Setup node js environment
+      - uses: actions/setup-node@v1
+        with:
+          node-version: '16.15.0'
+      - run: yarn install # will run `yarn install` command
+      - run: yarn build # will run `yarn build` command
+
+      - name: Create zip of build.
+        run: zip -r build.zip build/*
+
+      - name: copy file via ssh
+        uses: appleboy/scp-action@master
+        with:
+          host: 'example.com'
+          username: deploy
+          key: ${{ secrets.DEPLOY_KEY }}
+          port: 22
+          source: 'build.zip'
+          target: '/home/deploy/example/frontend/current'
+
+      - name: extract file on server
+        uses: appleboy/ssh-action@master
+        with:
+          host: 'example.com'
+          username: deploy
+          key: ${{ secrets.DEPLOY_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            cd  /home/deploy/example/frontend/current
+            rm -rf build
+            echo "unziping the build"
+            unzip build.zip
+            echo "Cleaning the build"
+            rm build.zip

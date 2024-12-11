@@ -1,0 +1,22 @@
+stages:
+  - build
+  - deploy
+
+# Build static assets (e.g., React or Angular app)
+build:
+  stage: build
+  script:
+    - npm install
+    - npm run build  # or relevant build command
+
+# Deploy to AWS S3
+deploy:
+  stage: deploy
+  script:
+    - aws s3 sync ./build/ s3://$AWS_S3_BUCKET_NAME/ --delete
+    - aws cloudfront create-invalidation --distribution-id $AWS_CLOUDFRONT_DISTRIBUTION_ID --paths "/*"
+  only:
+    - main
+  environment:
+    name: production
+    url: https://$AWS_S3_BUCKET_NAME.s3.amazonaws.com

@@ -1,0 +1,24 @@
+stages:
+  - build
+  - deploy
+
+# Build application
+build:
+  stage: build
+  script:
+    - echo "Building the app..."
+    - npm install  # or your relevant build command
+  only:
+    - tags  # Trigger only on Git tags
+
+# Deploy to production when a tag is pushed
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying tag $CI_COMMIT_TAG to production"
+    - ./deploy.sh  # Replace with your actual deploy script
+  only:
+    - tags  # Trigger only on Git tags
+  environment:
+    name: production
+    url: https://your-app.example.com
